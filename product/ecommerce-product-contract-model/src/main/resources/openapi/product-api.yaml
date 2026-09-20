@@ -4,10 +4,81 @@ info:
   description: High-performance product catalog and search service.
   version: 1.0.0
 
+tags:
+  - name: Product CRUD
+    description: Core product lifecycle operations (backed by primary DB)
+  - name: Product Search
+    description: Elasticsearch-powered search and faceting
+
 paths:
+
+  # ─── CRUD ─────────────────────────────────────────────────────────────────
+
+  /products:
+    post:
+      tags: [Product CRUD]
+      summary: Create a new product
+      operationId: createProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProductRequest'
+      responses:
+        '201':
+          description: Product created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '400':
+          description: Invalid request body
+        '409':
+          description: Product with the same SKU already exists
+
+    get:
+      tags: [Product CRUD]
+      summary: List products (paginated)
+      operationId: listProducts
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: sort
+          in: query
+          description: "Field to sort by, e.g. 'createdAt,desc'"
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by product status
+          schema:
+            type: string
+            enum: [ACTIVE, INACTIVE, DISCONTINUED, COMING_SOON]
+        - name: category
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated list of products
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductListResponse'
+
   /products/{id}:
     get:
-      summary: Get product details by ID
+      tags: [Product CRUD]
+      summary: Get a product by ID
       operationId: getProductById
       parameters:
         - name: id
@@ -17,7 +88,7 @@ paths:
             type: string
       responses:
         '200':
-          description: Successful retrieval
+          description: Product found
           content:
             application/json:
               schema:
@@ -25,21 +96,67 @@ paths:
         '404':
           description: Product not found
 
-  /products/search:
-    get:
-      summary: Search products with filtering and faceting
-      operationId: searchProducts
+    put:
+      tags: [Product CRUD]
+      summary: Replace a product (full update)
+      operationId: updateProduct
       parameters:
-         - name: search
-           in: query
-           style: deepObject
-           explode: true
-           schema:
-            $ref: '#/components/schemas/SearchProductsRequest'
-
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProductRequest'
       responses:
         '200':
-          description: Search results with metadata
+          description: Product updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '400':
+          description: Invalid request body
+        '404':
+          description: Product not found
+
+    delete:
+      tags: [Product CRUD]
+      summary: Delete a product
+      operationId: deleteProduct
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Product deleted
+        '404':
+          description: Product not found
+
+  # ─── SEARCH (Elasticsearch) ────────────────────────────────────────────────
+
+  /products/search:
+    get:
+      tags: [Product Search]
+      summary: Search products with filtering and faceting (Elasticsearch)
+      operationId: searchProducts
+      parameters:
+        - name: search
+          in: query
+          style: deepObject
+          explode: true
+          schema:
+            $ref: '#/components/schemas/SearchProductsRequest'
+      responses:
+        '200':
+          description: Search results with facets and pagination
           content:
             application/json:
               schema:
@@ -47,78 +164,133 @@ paths:
 
 components:
   schemas:
-    SearchProductsRequest:
-      type: object
-      properties:
-        # 1. Core Search
-        query:
-          type: string
-          default: "*"
 
-        # 2. Exact Match Filters
-        status:
+    # ─── CRUD Request Bodies ─────────────────────────────────────────────────
+
+    CreateProductRequest:
+      type: object
+      description: >
+        Payload for creating a new product. productId and createdAt are
+        server-generated and must not be provided.
+      required:
+        - sku
+        - title
+        - price
+        - currency
+        - inventory
+        - status
+      properties:
+        sku:
+          type: string
+          example: "SKU-001"
+        title:
+          type: string
+          example: "Ultra Wireless Headphones"
+        brand:
+          type: string
+        description:
           type: string
         category:
           type: string
         categoryPath:
           type: string
+          example: "Electronics/Audio/Headphones"
+        price:
+          type: number
+          format: double
+        compareAtPrice:
+          type: number
+          format: double
+        currency:
+          type: string
+          example: "USD"
+        inventory:
+          type: integer
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE, DISCONTINUED, COMING_SOON]
+        images:
+          type: array
+          items:
+            $ref: '#/components/schemas/Image'
+        attributes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attribute'
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Variant'
+        flags:
+          $ref: '#/components/schemas/ProductFlags'
+
+    UpdateProductRequest:
+      type: object
+      description: >
+        Payload for a full product replacement (PUT). All required fields
+        must be supplied; omitted optional fields will be cleared.
+      required:
+        - sku
+        - title
+        - price
+        - currency
+        - inventory
+        - status
+      properties:
+        sku:
+          type: string
         title:
           type: string
         brand:
           type: string
-        tags:
+        description:
+          type: string
+        category:
+          type: string
+        categoryPath:
+          type: string
+        price:
+          type: number
+          format: double
+        compareAtPrice:
+          type: number
+          format: double
+        currency:
+          type: string
+        inventory:
+          type: integer
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE, DISCONTINUED, COMING_SOON]
+        images:
           type: array
           items:
-            type: string
-
-        # 3. Inventory & Boolean Flags
-        inStockOnly:
-          type: boolean
-        isFeatured:
-          type: boolean
-        isNew:
-          type: boolean
-
-        # 4. Dynamic Attributes (The Map)
+            $ref: '#/components/schemas/Image'
         attributes:
-          type: object
-          additionalProperties:
-            type: array
-            items:
-              type: string
-
-        # 5. Ratings
-        avgRating:
-          type: number
-          format: double
-
-        # 6. Location & Fulfillment
-        lat:
-          type: number
-          format: double
-        lon:
-          type: number
-          format: double
-        distance:
-          type: string
-        regions:
           type: array
           items:
-            type: string
-        storeIds:
+            $ref: '#/components/schemas/Attribute'
+        variants:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/Variant'
+        flags:
+          $ref: '#/components/schemas/ProductFlags'
 
-        # 7. Metadata
-        page:
-          type: integer
-          default: 0
-        size:
-          type: integer
-          default: 20
-        sort:
-          type: string
+    # ─── CRUD Response ───────────────────────────────────────────────────────
+
+    ProductListResponse:
+      type: object
+      description: Paginated list of products (CRUD list endpoint)
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ─── Core Domain Model ───────────────────────────────────────────────────
 
     Product:
       type: object
@@ -155,7 +327,7 @@ components:
           type: boolean
         status:
           type: string
-          enum: [ACTIVE, INACTIVE, DISCONTINUED, COMING_SOON ]
+          enum: [ACTIVE, INACTIVE, DISCONTINUED, COMING_SOON]
         images:
           type: array
           items:
@@ -173,6 +345,9 @@ components:
         flags:
           $ref: '#/components/schemas/ProductFlags'
         createdAt:
+          type: string
+          format: date-time
+        updatedAt:
           type: string
           format: date-time
 
@@ -226,7 +401,7 @@ components:
           type: object
           additionalProperties:
             type: integer
-          description: "Map of star ratings (e.g., {'5': 100})"
+          description: "Map of star ratings, e.g. {'5': 100, '4': 42}"
 
     ProductFlags:
       type: object
@@ -238,7 +413,68 @@ components:
         isNew:
           type: boolean
 
-        # The "Wrapper" for your search results
+    # ─── Search (Elasticsearch) ──────────────────────────────────────────────
+
+    SearchProductsRequest:
+      type: object
+      properties:
+        query:
+          type: string
+          default: "*"
+        status:
+          type: string
+        category:
+          type: string
+        categoryPath:
+          type: string
+        title:
+          type: string
+        brand:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        inStockOnly:
+          type: boolean
+        isFeatured:
+          type: boolean
+        isNew:
+          type: boolean
+        attributes:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        avgRating:
+          type: number
+          format: double
+        lat:
+          type: number
+          format: double
+        lon:
+          type: number
+          format: double
+        distance:
+          type: string
+        regions:
+          type: array
+          items:
+            type: string
+        storeIds:
+          type: array
+          items:
+            type: string
+        page:
+          type: integer
+          default: 0
+        size:
+          type: integer
+          default: 20
+        sort:
+          type: string
+
     SearchResponse:
       type: object
       properties:
@@ -256,7 +492,6 @@ components:
           type: integer
           format: int64
 
-    # Your custom Pagination contract
     Pagination:
       type: object
       properties:
@@ -270,7 +505,6 @@ components:
         totalPages:
           type: integer
 
-    # Faceting for filters
     Facet:
       type: object
       properties:
