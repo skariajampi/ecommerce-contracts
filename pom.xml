@@ -180,24 +180,6 @@
                     <groupId>org.codehaus.mojo</groupId>
                     <artifactId>build-helper-maven-plugin</artifactId>
                     <version>${build.helper.version}</version>
-
-                    <executions>
-                        <execution>
-                            <id>add-openapi-generated-sources</id>
-                            <phase>generate-sources</phase>
-                            <goals>
-                                <goal>add-source</goal>
-                            </goals>
-
-                            <configuration>
-                                <sources>
-                                    <source>
-                                        ${project.build.directory}/generated-sources/openapi
-                                    </source>
-                                </sources>
-                            </configuration>
-                        </execution>
-                    </executions>
                 </plugin>
 
             </plugins>
