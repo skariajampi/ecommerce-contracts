@@ -1,0 +1,232 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.skaria.ecommerce</groupId>
+        <artifactId>ecommerce-contracts</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>ecommerce-contract-model-parent</artifactId>
+    <packaging>pom</packaging>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+
+                <plugin>
+                    <groupId>org.openapitools</groupId>
+                    <artifactId>openapi-generator-maven-plugin</artifactId>
+                    <version>${openapi-generator-maven-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>generate-contract-model</id>
+                            <phase>generate-sources</phase>
+                            <goals>
+                                <goal>generate</goal>
+                            </goals>
+                            <configuration>
+                                <inputSpec>${maven.multiModuleProjectDirectory}/${contract.domain}/ecommerce-${contract.domain}-contract-model/src/main/resources/openapi/${contract.spec.name}.yaml</inputSpec>
+                                <output>${project.build.directory}/generated-sources/openapi</output>
+                                <generatorName>java</generatorName>
+                                <generateApis>false</generateApis>
+                                <generateModels>true</generateModels>
+                                <!-- disable test generation -->
+                                <generateApiTests>false</generateApiTests>
+                                <generateModelTests>false</generateModelTests>
+                                <generateSupportingFiles>false</generateSupportingFiles>
+                                <generateModelDocumentation>false</generateModelDocumentation>
+                                <apiPackage>org.example.skaria.${contract.domain}.unused</apiPackage>
+                                <modelPackage>org.example.skaria.${contract.domain}.dto</modelPackage>
+                                <modelNameSuffix>DTO</modelNameSuffix>
+                                <configOptions>
+                                    <interfaceOnly>true</interfaceOnly>
+                                    <useSpringBoot3>true</useSpringBoot3>
+                                    <delegatePattern>true</delegatePattern>
+                                    <java8>true</java8>
+                                    <useTags>false</useTags>
+                                    <serializationLibrary>jackson</serializationLibrary>
+                                    <useJakartaEe>true</useJakartaEe>
+                                    <!-- Important: Set model type to pojo for Lombok compatibility -->
+                                    <modelType>pojo</modelType>
+
+                                    <!-- This is the key: add your Lombok annotations here -->
+                                    <additionalModelTypeAnnotations>
+                                        @lombok.Builder(toBuilder = true)
+                                        @lombok.Data
+                                        @lombok.NoArgsConstructor
+                                        @lombok.AllArgsConstructor
+                                    </additionalModelTypeAnnotations>
+                                </configOptions>
+                            </configuration>
+                        </execution>
+
+                    </executions>
+                </plugin>
+                <!--<plugin>
+                    <groupId>io.openapiprocessor</groupId>
+                    <artifactId>openapi-processor-maven-plugin</artifactId>
+                    <version>${openapi.processor.version}</version>
+
+                    <dependencies>
+                        <dependency>
+                            <groupId>io.openapiprocessor</groupId>
+                            <artifactId>openapi-processor-spring</artifactId>
+                            <version>${openapi.processor.version}</version>
+                        </dependency>
+                    </dependencies>
+
+                    <configuration>
+                        <apiPath>
+                            ${project.basedir}/src/main/resources/api-specs/product-api.yaml
+                        </apiPath>
+                    </configuration>
+
+                    <executions>
+                        <execution>
+                            <id>generate-openapi-models</id>
+                            <phase>generate-sources</phase>
+                            <goals>
+                                <goal>process</goal>
+                            </goals>
+
+                            <configuration>
+                                <id>spring</id>
+
+                                <options>
+                                    <values>
+                                        <targetDir>
+                                            ${project.build.directory}/generated-sources/openapi
+                                        </targetDir>
+
+                                        <mapping>
+                                            ${project.basedir}/src/main/resources/api-specs/mapping.yaml
+                                        </mapping>
+
+                                        <showWarnings>true</showWarnings>
+                                    </values>
+                                </options>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>-->
+
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>build-helper-maven-plugin</artifactId>
+                    <version>${build.helper.version}</version>
+
+                    <executions>
+                        <execution>
+                            <id>add-openapi-generated-sources</id>
+                            <phase>generate-sources</phase>
+                            <goals>
+                                <goal>add-source</goal>
+                            </goals>
+
+                            <configuration>
+                                <sources>
+                                    <source>
+                                        ${project.build.directory}/generated-sources/openapi
+                                    </source>
+                                </sources>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
+                    <groupId>org.jsonschema2pojo</groupId>
+                    <artifactId>jsonschema2pojo-maven-plugin</artifactId>
+                    <version>${json.schema.version}</version>
+                    <dependencies>
+                        <dependency>
+                            <groupId>org.example</groupId>
+                            <artifactId>custom-annotations</artifactId>
+                            <version>${project.version}</version>
+                        </dependency>
+                    </dependencies>
+                    <executions>
+                        <execution>
+                            <id>json</id>
+                            <configuration>
+                                <sourceDirectory>${project.basedir}/src/main/resources/schema/json</sourceDirectory>
+                                <outputDirectory>${project.build.directory}/generated-sources</outputDirectory>
+                                <targetPackage>com.skaria.json.model</targetPackage>
+                                <includeGetters>${enable}</includeGetters>
+                                <includeSetters>${enable}</includeSetters>
+                                <includeToString>${enable}</includeToString>
+                                <inclusionLevel>${inclusionLevel}</inclusionLevel>
+                                <includeHashcodeAndEquals>${enable}</includeHashcodeAndEquals>
+                                <customAnnotator>org.example.LombokAnnotator</customAnnotator>
+                                <includeJsr303Annotations>true</includeJsr303Annotations>
+                                <includeAdditionalProperties>false</includeAdditionalProperties>
+                            </configuration>
+                            <goals>
+                                <goal>generate</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+                <!--<plugin>
+                    <groupId>org.apache.avro</groupId>
+                    <artifactId>avro-maven-plugin</artifactId>
+                    <version>${avro.version}</version>
+                    <executions>
+                        <execution>
+                            <phase>generate-sources</phase>
+                            <goals>
+                                <goal>schema</goal>
+                            </goals>
+                            <configuration>
+                                <sourceDirectory>${project.basedir}/src/main/resources/schema/avro</sourceDirectory>
+                                <outputDirectory>${project.build.directory}/generated-sources/avro</outputDirectory>
+                                <fieldVisibility>PRIVATE</fieldVisibility>
+
+                                &lt;!&ndash; convert Aro string to java.lang.String instead of CharSequence&ndash;&gt;
+                                <stringType>String</stringType>
+                                &lt;!&ndash; convert Aro string to java UUID instead of default string&ndash;&gt;
+                                <customConversions>org.apache.avro.Conversions$UUIDConversion</customConversions>
+                                <createOptionalGetters>true</createOptionalGetters>
+                                <imports>
+                                    <import>${project.basedir}/src/main/resources/schema/avro/avsc/InvariantFailureRecord.avsc</import>
+                                    <import>${project.basedir}/src/main/resources/schema/avro/avsc/AuditRecord.avsc</import>
+                                </imports>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>-->
+                <plugin>
+                    <groupId>org.apache.avro</groupId>
+                    <artifactId>avro-maven-plugin</artifactId>
+                    <version>${avro.version}</version>
+                    <executions>
+                        <execution>
+                            <phase>generate-sources</phase>
+                            <goals>
+                                <goal>schema</goal>
+                                <goal>protocol</goal>
+                                <goal>idl-protocol</goal>
+                            </goals>
+                            <configuration>
+                                <sourceDirectory>${project.basedir}/src/main/resources/schema/avro/avdl</sourceDirectory>
+                                <outputDirectory>${project.basedir}/src/main/java</outputDirectory>
+                                <fieldVisibility>PRIVATE</fieldVisibility>
+
+                                <!-- convert Aro string to java.lang.String instead of CharSequence-->
+                                <stringType>String</stringType>
+                                <!-- convert Aro string to java UUID instead of default string-->
+                                <customConversions>org.apache.avro.Conversions$UUIDConversion</customConversions>
+                                <createOptionalGetters>true</createOptionalGetters>
+
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

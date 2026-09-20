@@ -1,0 +1,291 @@
+openapi: 3.0.3
+info:
+  title: Product Search API
+  description: High-performance product catalog and search service.
+  version: 1.0.0
+
+paths:
+  /products/{id}:
+    get:
+      summary: Get product details by ID
+      operationId: getProductById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful retrieval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '404':
+          description: Product not found
+
+  /products/search:
+    get:
+      summary: Search products with filtering and faceting
+      operationId: searchProducts
+      parameters:
+         - name: search
+           in: query
+           style: deepObject
+           explode: true
+           schema:
+            $ref: '#/components/schemas/SearchProductsRequest'
+
+      responses:
+        '200':
+          description: Search results with metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+
+components:
+  schemas:
+    SearchProductsRequest:
+      type: object
+      properties:
+        # 1. Core Search
+        query:
+          type: string
+          default: "*"
+
+        # 2. Exact Match Filters
+        status:
+          type: string
+        category:
+          type: string
+        categoryPath:
+          type: string
+        title:
+          type: string
+        brand:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+
+        # 3. Inventory & Boolean Flags
+        inStockOnly:
+          type: boolean
+        isFeatured:
+          type: boolean
+        isNew:
+          type: boolean
+
+        # 4. Dynamic Attributes (The Map)
+        attributes:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+
+        # 5. Ratings
+        avgRating:
+          type: number
+          format: double
+
+        # 6. Location & Fulfillment
+        lat:
+          type: number
+          format: double
+        lon:
+          type: number
+          format: double
+        distance:
+          type: string
+        regions:
+          type: array
+          items:
+            type: string
+        storeIds:
+          type: array
+          items:
+            type: string
+
+        # 7. Metadata
+        page:
+          type: integer
+          default: 0
+        size:
+          type: integer
+          default: 20
+        sort:
+          type: string
+
+    Product:
+      type: object
+      properties:
+        productId:
+          type: string
+          example: "PROD-123"
+        sku:
+          type: string
+        title:
+          type: string
+          example: "Ultra Wireless Headphones"
+        brand:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        categoryPath:
+          type: string
+          example: "Electronics/Audio/Headphones"
+        price:
+          type: number
+          format: double
+        compareAtPrice:
+          type: number
+          format: double
+        currency:
+          type: string
+          example: "USD"
+        inventory:
+          type: integer
+        lowStock:
+          type: boolean
+        status:
+          type: string
+          enum: [ACTIVE, INACTIVE, DISCONTINUED, COMING_SOON ]
+        images:
+          type: array
+          items:
+            $ref: '#/components/schemas/Image'
+        attributes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attribute'
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Variant'
+        ratings:
+          $ref: '#/components/schemas/Ratings'
+        flags:
+          $ref: '#/components/schemas/ProductFlags'
+        createdAt:
+          type: string
+          format: date-time
+
+    Image:
+      type: object
+      properties:
+        url:
+          type: string
+        isPrimary:
+          type: boolean
+        altText:
+          type: string
+
+    Attribute:
+      type: object
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+        filterable:
+          type: boolean
+
+    Variant:
+      type: object
+      properties:
+        variantId:
+          type: string
+        sku:
+          type: string
+        price:
+          type: number
+        compareAtPrice:
+          type: number
+        inventory:
+          type: integer
+        attributes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attribute'
+
+    Ratings:
+      type: object
+      properties:
+        average:
+          type: number
+          format: float
+        count:
+          type: integer
+        distribution:
+          type: object
+          additionalProperties:
+            type: integer
+          description: "Map of star ratings (e.g., {'5': 100})"
+
+    ProductFlags:
+      type: object
+      properties:
+        isFeatured:
+          type: boolean
+        isBestseller:
+          type: boolean
+        isNew:
+          type: boolean
+
+        # The "Wrapper" for your search results
+    SearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+        facets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Facet'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        timeTaken:
+          type: integer
+          format: int64
+
+    # Your custom Pagination contract
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        size:
+          type: integer
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+
+    # Faceting for filters
+    Facet:
+      type: object
+      properties:
+        name:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FacetItem'
+
+    FacetItem:
+      type: object
+      properties:
+        key:
+          type: string
+        count:
+          type: integer
+          format: int64

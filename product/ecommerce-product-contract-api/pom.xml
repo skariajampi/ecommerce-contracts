@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.skaria.ecommerce</groupId>
+        <artifactId>ecommerce-contract-api-parent</artifactId>
+        <version>1.0.0</version>
+        <relativePath>../../ecommerce-contract-api-parent</relativePath>
+    </parent>
+
+    <artifactId>ecommerce-product-contract-api</artifactId>
+
+    <properties>
+        <contract.domain>product</contract.domain>
+        <contract.spec.name>product-api</contract.spec.name>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.skaria.ecommerce</groupId>
+            <artifactId>ecommerce-product-contract-model</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.validation</groupId>
+            <artifactId>jakarta.validation-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.openapitools</groupId>
+                <artifactId>openapi-generator-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
