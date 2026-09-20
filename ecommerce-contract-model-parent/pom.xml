@@ -32,7 +32,14 @@
                             <configuration>
                                 <inputSpec>${maven.multiModuleProjectDirectory}/${contract.domain}/ecommerce-${contract.domain}-contract-model/src/main/resources/openapi/${contract.spec.name}.yaml</inputSpec>
                                 <output>${project.build.directory}/generated-sources/openapi</output>
+                                <!-- PURE MODEL MODULE: no framework dependency.
+                                     'java' generator + 'native' library produces plain Jackson POJOs.
+                                     Because generateSupportingFiles/generateApis are false, NO HTTP
+                                     client (ApiClient/OkHttp/Gson) is generated - only the DTOs.
+                                     'spring' was rejected: it injects org.springframework.format.*
+                                     into the models. -->
                                 <generatorName>java</generatorName>
+                                <library>native</library>
                                 <generateApis>false</generateApis>
                                 <generateModels>true</generateModels>
                                 <!-- disable test generation -->
@@ -53,12 +60,33 @@
                                     <useJakartaEe>true</useJakartaEe>
                                     <!-- Important: Set model type to pojo for Lombok compatibility -->
                                     <modelType>pojo</modelType>
+                                    <!-- Drop swagger @Schema imports (io.swagger.v3.*) -->
+                                    <annotationLibrary>none</annotationLibrary>
+                                    <documentationProvider>none</documentationProvider>
+                                    <!-- Drop org.openapitools.jackson.nullable.JsonNullable -->
+                                    <openApiNullable>false</openApiNullable>
+                                    <!-- jakarta.validation-api (provided) - not Spring -->
 
                                     <!-- This is the key: add your Lombok annotations here -->
+                                    <useBeanValidation>true</useBeanValidation>
+                                    <hideGenerationTimestamp>true</hideGenerationTimestamp>
+                                    <!-- Drop the URL-query helper (toUrlQueryString) that would
+                                         otherwise pull in the client-side ApiClient supporting file.
+                                         Keeps the models pure DTOs with no client scaffolding. -->
+                                    <supportUrlQuery>false</supportUrlQuery>
+
+                                    <!-- Lombok annotations on every generated model.
+                                         NOTE: @NoArgsConstructor is intentionally omitted - the java
+                                         generator already emits an explicit no-arg constructor, so
+                                         adding Lombok's would cause a "constructor already defined"
+                                         clash. @AllArgsConstructor IS added because the generator does
+                                         NOT emit an all-args constructor, and @Builder(toBuilder)
+                                         requires one. @Data is additive (Lombok skips getters/setters
+                                         that already exist). Lombok is provided-scope (compile-time
+                                         only), so the compiled DTOs remain framework-free. -->
                                     <additionalModelTypeAnnotations>
                                         @lombok.Builder(toBuilder = true)
                                         @lombok.Data
-                                        @lombok.NoArgsConstructor
                                         @lombok.AllArgsConstructor
                                     </additionalModelTypeAnnotations>
                                 </configOptions>
@@ -67,53 +95,6 @@
 
                     </executions>
                 </plugin>
-                <!--<plugin>
-                    <groupId>io.openapiprocessor</groupId>
-                    <artifactId>openapi-processor-maven-plugin</artifactId>
-                    <version>${openapi.processor.version}</version>
-
-                    <dependencies>
-                        <dependency>
-                            <groupId>io.openapiprocessor</groupId>
-                            <artifactId>openapi-processor-spring</artifactId>
-                            <version>${openapi.processor.version}</version>
-                        </dependency>
-                    </dependencies>
-
-                    <configuration>
-                        <apiPath>
-                            ${project.basedir}/src/main/resources/api-specs/product-api.yaml
-                        </apiPath>
-                    </configuration>
-
-                    <executions>
-                        <execution>
-                            <id>generate-openapi-models</id>
-                            <phase>generate-sources</phase>
-                            <goals>
-                                <goal>process</goal>
-                            </goals>
-
-                            <configuration>
-                                <id>spring</id>
-
-                                <options>
-                                    <values>
-                                        <targetDir>
-                                            ${project.build.directory}/generated-sources/openapi
-                                        </targetDir>
-
-                                        <mapping>
-                                            ${project.basedir}/src/main/resources/api-specs/mapping.yaml
-                                        </mapping>
-
-                                        <showWarnings>true</showWarnings>
-                                    </values>
-                                </options>
-                            </configuration>
-                        </execution>
-                    </executions>
-                </plugin>-->
 
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId>
