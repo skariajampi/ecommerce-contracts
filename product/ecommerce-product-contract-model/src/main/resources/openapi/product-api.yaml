@@ -1,19 +1,37 @@
 openapi: 3.0.3
 info:
-  title: Product Search API
-  description: High-performance product catalog and search service.
-  version: 1.0.0
+  title: Product Catalog API
+  description: |
+    CRUD service for the product catalog — the Postgres-backed **write model**.
+
+    Modelling rules:
+    - **Product vs Variant.** The product is what customers shop for (title,
+      media, brand, category, options). The variant is the sellable unit —
+      the thing in the cart and on the warehouse shelf. Variants own SKU,
+      price, inventory and fulfillment data.
+    - **The option matrix.** `options` on the product declare the axes that
+      differentiate variants (e.g. Color, Size) and the allowed values. Each
+      variant carries `selectedOptions` — one cell of that matrix. The matrix
+      is sparse: only stocked combinations exist as variants. Variant
+      combinations must be unique within the product.
+    - **Downstream identity.** Cart, orders, inventory events and the
+      Elasticsearch projection reference `variantId`/`sku`, never `productId`
+      alone. SKU is globally unique across the catalog.
+    - **Money** is `amountMinor` (integer minor units) + ISO 4217 currency.
+      `9999 USD` = $99.99. Floating-point amounts are not accepted.
+    - **Category is a reference.** Requests carry `categoryId`; responses
+      embed a denormalized `CategoryRef`. Category paths are derived in the
+      read model only.
+    - **Derived fields are out of scope here.** `ratings`, `lowStock`,
+      `categoryPath`, `isNew`, `isBestseller` and bundle inventory are
+      computed by the read/projection pipeline and are absent from this API.
+  version: 2.1.0
 
 tags:
   - name: Product CRUD
-    description: Core product lifecycle operations (backed by primary DB)
-  - name: Product Search
-    description: Elasticsearch-powered search and faceting
+    description: Core product lifecycle operations (primary DB)
 
 paths:
-
-  # ─── CRUD ─────────────────────────────────────────────────────────────────
-
   /products:
     post:
       tags: [Product CRUD]
@@ -27,15 +45,22 @@ paths:
               $ref: '#/components/schemas/CreateProductRequest'
       responses:
         '201':
-          description: Product created successfully
+          description: Product created.
+          headers:
+            Location:
+              description: URL of the created product.
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Product'
         '400':
-          description: Invalid request body
+          $ref: '#/components/responses/BadRequest'
         '409':
-          description: Product with the same SKU already exists
+          $ref: '#/components/responses/UniqueConflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
 
     get:
       tags: [Product CRUD]
@@ -46,64 +71,80 @@ paths:
           in: query
           schema:
             type: integer
+            minimum: 0
             default: 0
         - name: size
           in: query
+          description: Page size, hard-capped.
           schema:
             type: integer
+            minimum: 1
+            maximum: 100
             default: 20
         - name: sort
           in: query
-          description: "Field to sort by, e.g. 'createdAt,desc'"
+          description: Sort field and direction (whitelisted).
           schema:
             type: string
+            enum: ['createdAt,asc', 'createdAt,desc', 'updatedAt,asc', 'updatedAt,desc', 'title,asc', 'title,desc']
+            default: 'createdAt,desc'
         - name: status
           in: query
-          description: Filter by product status
           schema:
-            type: string
-            enum: [ACTIVE, INACTIVE, DISCONTINUED, COMING_SOON]
-        - name: category
+            $ref: '#/components/schemas/ProductStatus'
+        - name: categoryId
           in: query
           schema:
             type: string
       responses:
         '200':
-          description: Paginated list of products
+          description: Paginated list of products.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProductListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
 
   /products/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
     get:
       tags: [Product CRUD]
       summary: Get a product by ID
       operationId: getProductById
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         '200':
-          description: Product found
+          description: Product found.
+          headers:
+            ETag:
+              description: Current optimistic-lock version, e.g. `"7"`.
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Product'
         '404':
-          description: Product not found
+          $ref: '#/components/responses/NotFound'
 
     put:
       tags: [Product CRUD]
-      summary: Replace a product (full update)
+      summary: Replace a product (full update, optimistic locking)
       operationId: updateProduct
       parameters:
-        - name: id
-          in: path
-          required: true
+        - name: If-Match
+          in: header
+          required: false
+          description: >
+            Optimistic concurrency control. Supply the version returned in the
+            `ETag` header (e.g. `"7"`). If omitted, the replacement is applied
+            unconditionally.
           schema:
             type: string
       requestBody:
@@ -114,234 +155,406 @@ paths:
               $ref: '#/components/schemas/UpdateProductRequest'
       responses:
         '200':
-          description: Product updated
+          description: Product updated.
+          headers:
+            ETag:
+              description: New optimistic-lock version.
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Product'
         '400':
-          description: Invalid request body
+          $ref: '#/components/responses/BadRequest'
         '404':
-          description: Product not found
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/UniqueConflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
 
     delete:
       tags: [Product CRUD]
       summary: Delete a product
       operationId: deleteProduct
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         '204':
-          description: Product deleted
+          description: Product deleted. Variants are deleted with it (composition).
         '404':
-          description: Product not found
-
-  # ─── SEARCH (Elasticsearch) ────────────────────────────────────────────────
-
-  /products/search:
-    get:
-      tags: [Product Search]
-      summary: Search products with filtering and faceting (Elasticsearch)
-      operationId: searchProducts
-      parameters:
-        - name: search
-          in: query
-          style: deepObject
-          explode: true
-          schema:
-            $ref: '#/components/schemas/SearchProductsRequest'
-      responses:
-        '200':
-          description: Search results with facets and pagination
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SearchResponse'
+          $ref: '#/components/responses/NotFound'
 
 components:
+
+  responses:
+    BadRequest:
+      description: Invalid request body or query parameters.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: Product not found.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    UniqueConflict:
+      description: >
+        Unique constraint violation — a variant SKU or SEO slug already
+        exists somewhere in the catalog.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    PreconditionFailed:
+      description: If-Match header did not match the current product version.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    UnprocessableEntity:
+      description: >
+        Semantic business-rule violation — e.g. selectedOptions not matching
+        the declared options, a duplicate variant combination within the
+        product, no default variant, or invalid bundle components.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
   schemas:
 
-    # ─── CRUD Request Bodies ─────────────────────────────────────────────────
+    ProductStatus:
+      type: string
+      enum: [ACTIVE, INACTIVE, DISCONTINUED, COMING_SOON]
 
-    CreateProductRequest:
+    ProductKind:
+      type: string
+      description: >
+        STANDARD products sell their own variants. BUNDLE products are kits
+        assembled from other sellable variants; they carry exactly one
+        variant (the bundle SKU) and their inventory/availability are
+        computed from components in the read model.
+      enum: [STANDARD, BUNDLE]
+
+    Money:
       type: object
       description: >
-        Payload for creating a new product. productId and createdAt are
-        server-generated and must not be provided.
-      required:
-        - sku
-        - title
-        - price
-        - currency
-        - inventory
-        - status
+        Monetary amount in integer minor units plus an ISO 4217 currency
+        code. Example: amountMinor=9999, currency=USD → $99.99.
+      required: [amountMinor, currency]
+      additionalProperties: false
+      properties:
+        amountMinor:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 9999
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          example: USD
+
+    CategoryRef:
+      type: object
+      description: >
+        Denormalized category snapshot resolved from categoryId. The
+        category tree is managed by the category service.
+      additionalProperties: false
+      properties:
+        categoryId:
+          type: string
+          example: cat-apparel-tees
+        name:
+          type: string
+          maxLength: 128
+          example: T-Shirts
+        slug:
+          type: string
+          pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
+          example: t-shirts
+
+    OptionDefinition:
+      type: object
+      description: >
+        A variant axis declared on the product, e.g. "Color" with values
+        [Black, Sand]. Option names must be unique within a product and must
+        not duplicate an attribute name. Max 3 options keeps the variant
+        matrix tractable.
+      required: [name, values]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 60
+          example: Color
+        values:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+            minLength: 1
+            maxLength: 100
+          example: [Black, Sand]
+        position:
+          type: integer
+          minimum: 0
+          description: Display order of this option in pickers.
+
+    SelectedOption:
+      type: object
+      description: A variant's resolved position in one axis of the option matrix.
+      required: [optionName, value]
+      additionalProperties: false
+      properties:
+        optionName:
+          type: string
+          example: Color
+        value:
+          type: string
+          example: Black
+
+    BundleComponent:
+      type: object
+      description: >
+        One line of a bundle's recipe. `sku` must reference an existing,
+        sellable variant SKU of another product — self-reference and unknown
+        SKUs are rejected with 422.
+      required: [sku, quantity]
+      additionalProperties: false
       properties:
         sku:
           type: string
-          example: "SKU-001"
-        title:
-          type: string
-          example: "Ultra Wireless Headphones"
-        brand:
-          type: string
-        description:
-          type: string
-        category:
-          type: string
-        categoryPath:
-          type: string
-          example: "Electronics/Audio/Headphones"
-        price:
-          type: number
-          format: double
-        compareAtPrice:
-          type: number
-          format: double
-        currency:
-          type: string
-          example: "USD"
-        inventory:
+          maxLength: 64
+          example: TEE-BLK-M
+        quantity:
           type: integer
-        status:
-          type: string
-          enum: [ACTIVE, INACTIVE, DISCONTINUED, COMING_SOON]
-        images:
-          type: array
-          items:
-            $ref: '#/components/schemas/Image'
-        attributes:
-          type: array
-          items:
-            $ref: '#/components/schemas/Attribute'
-        variants:
-          type: array
-          items:
-            $ref: '#/components/schemas/Variant'
-        flags:
-          $ref: '#/components/schemas/ProductFlags'
+          minimum: 1
+          example: 1
 
-    UpdateProductRequest:
+    Attribute:
       type: object
       description: >
-        Payload for a full product replacement (PUT). All required fields
-        must be supplied; omitted optional fields will be cleared.
-      required:
-        - sku
-        - title
-        - price
-        - currency
-        - inventory
-        - status
+        Descriptive product-level fact that is NOT a variant axis, e.g.
+        "Material: organic cotton". Variant-distinguishing facts belong in
+        options/selectedOptions instead.
+      required: [name, value]
+      additionalProperties: false
       properties:
+        name:
+          type: string
+          maxLength: 64
+        value:
+          type: string
+          maxLength: 512
+
+    Image:
+      type: object
+      description: Product image. Exactly one image per product must have isPrimary=true.
+      required: [url]
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+        altText:
+          type: string
+          maxLength: 255
+        isPrimary:
+          type: boolean
+          default: false
+        position:
+          type: integer
+          minimum: 0
+
+    Seo:
+      type: object
+      description: Storefront presentation data. `slug` is unique across the catalog.
+      additionalProperties: false
+      properties:
+        slug:
+          type: string
+          pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
+          maxLength: 140
+          example: trail-tee
+        metaTitle:
+          type: string
+          maxLength: 160
+        metaDescription:
+          type: string
+          maxLength: 320
+
+    DimensionsMm:
+      type: object
+      description: Shipping dimensions in millimetres.
+      additionalProperties: false
+      properties:
+        length:
+          type: integer
+          minimum: 0
+        width:
+          type: integer
+          minimum: 0
+        height:
+          type: integer
+          minimum: 0
+
+    Variant:
+      type: object
+      description: >
+        The sellable unit — one stocked cell of the product's option matrix.
+        Owns SKU, price, inventory and fulfillment data. The product's
+        `options` explain WHY variants differ; `selectedOptions` says which
+        cell this is. SKU is globally unique; cart, orders and inventory
+        events reference variantId/sku, never productId alone.
+      required: [sku, price, inventory]
+      additionalProperties: false
+      properties:
+        variantId:
+          type: string
+          description: Server-generated. Ignored on create.
         sku:
           type: string
-        title:
-          type: string
-        brand:
-          type: string
-        description:
-          type: string
-        category:
-          type: string
-        categoryPath:
-          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$'
+          maxLength: 64
+          example: TEE-BLK-M
+        selectedOptions:
+          type: array
+          maxItems: 3
+          description: >
+            Required when the product declares options: exactly one entry per
+            declared option, values must come from the declared value list,
+            and the combination must be unique within the product
+            (violations → 422). Omit for products with no options.
+          items:
+            $ref: '#/components/schemas/SelectedOption'
         price:
-          type: number
-          format: double
+          $ref: '#/components/schemas/Money'
         compareAtPrice:
-          type: number
-          format: double
-        currency:
-          type: string
+          $ref: '#/components/schemas/Money'
         inventory:
           type: integer
-        status:
+          minimum: 0
+          description: Stock on hand for this SKU.
+        isDefault:
+          type: boolean
+          default: false
+          description: >
+            Exactly one variant per product must be the default — its price
+            is shown on listing pages and used for deep links. Server assigns
+            the first variant if the client does not specify one (422 if the
+            payload marks zero or multiple).
+        barcode:
           type: string
-          enum: [ACTIVE, INACTIVE, DISCONTINUED, COMING_SOON]
-        images:
+          pattern: '^[0-9]{8,14}$'
+          description: GTIN/UPC/EAN for retail and scanning.
+        weightGrams:
+          type: integer
+          minimum: 0
+          description: Used for shipping-rate calculation.
+        dimensionsMm:
+          $ref: '#/components/schemas/DimensionsMm'
+        imageUrls:
           type: array
+          maxItems: 5
+          description: >
+            Variant-specific shots (e.g. the sand colour). Clients fall back
+            to the product's images when absent.
           items:
-            $ref: '#/components/schemas/Image'
-        attributes:
-          type: array
-          items:
-            $ref: '#/components/schemas/Attribute'
-        variants:
-          type: array
-          items:
-            $ref: '#/components/schemas/Variant'
-        flags:
-          $ref: '#/components/schemas/ProductFlags'
+            type: string
+            format: uri
+            maxLength: 2048
 
-    # ─── CRUD Response ───────────────────────────────────────────────────────
-
-    ProductListResponse:
+    ProductFlags:
       type: object
-      description: Paginated list of products (CRUD list endpoint)
+      description: >
+        Curated merchandising flags. Derived flags (isNew, isBestseller,
+        lowStock) are computed in the read model and are not writable here.
+      additionalProperties: false
       properties:
-        results:
-          type: array
-          items:
-            $ref: '#/components/schemas/Product'
-        pagination:
-          $ref: '#/components/schemas/Pagination'
-
-    # ─── Core Domain Model ───────────────────────────────────────────────────
+        isFeatured:
+          type: boolean
+          default: false
 
     Product:
       type: object
+      description: >
+        Full product resource as stored in the primary database. Business
+        rules enforced server-side: option names unique per product; each
+        variant's selectedOptions resolves against the declared options with
+        a unique combination; exactly one default variant; BUNDLE products
+        carry exactly one variant plus a non-empty bundleComponents recipe.
+      additionalProperties: false
+      required:
+        - productId
+        - version
+        - title
+        - status
+        - productKind
+        - category
+        - createdAt
+        - updatedAt
       properties:
         productId:
           type: string
-          example: "PROD-123"
-        sku:
-          type: string
+          example: PROD-123
+        version:
+          type: integer
+          format: int64
+          description: Optimistic-lock version. Changes on every update; exposed as ETag.
         title:
           type: string
-          example: "Ultra Wireless Headphones"
+          maxLength: 255
         brand:
           type: string
+          maxLength: 128
         description:
           type: string
+          maxLength: 5000
         category:
-          type: string
-        categoryPath:
-          type: string
-          example: "Electronics/Audio/Headphones"
-        price:
-          type: number
-          format: double
-        compareAtPrice:
-          type: number
-          format: double
-        currency:
-          type: string
-          example: "USD"
-        inventory:
-          type: integer
-        lowStock:
-          type: boolean
+          $ref: '#/components/schemas/CategoryRef'
         status:
-          type: string
-          enum: [ACTIVE, INACTIVE, DISCONTINUED, COMING_SOON]
+          $ref: '#/components/schemas/ProductStatus'
+        productKind:
+          $ref: '#/components/schemas/ProductKind'
+        options:
+          type: array
+          maxItems: 3
+          description: The variant axes. Absent for simple products.
+          items:
+            $ref: '#/components/schemas/OptionDefinition'
         images:
           type: array
+          maxItems: 20
           items:
             $ref: '#/components/schemas/Image'
         attributes:
           type: array
+          maxItems: 50
           items:
             $ref: '#/components/schemas/Attribute'
         variants:
           type: array
+          maxItems: 100
+          description: >
+            May be empty only for content-only drafts; a product cannot be
+            purchased or activated without at least one variant.
           items:
             $ref: '#/components/schemas/Variant'
-        ratings:
-          $ref: '#/components/schemas/Ratings'
+        bundleComponents:
+          type: array
+          maxItems: 50
+          description: Present iff productKind=BUNDLE.
+          items:
+            $ref: '#/components/schemas/BundleComponent'
+        seo:
+          $ref: '#/components/schemas/Seo'
         flags:
           $ref: '#/components/schemas/ProductFlags'
         createdAt:
@@ -351,175 +564,178 @@ components:
           type: string
           format: date-time
 
-    Image:
+    CreateProductRequest:
       type: object
+      description: >
+        Create a product. productId, version and timestamps are
+        server-generated. Variants may be supplied now or added later (draft);
+        each variant must carry sku, price and inventory.
+      required:
+        - title
+        - categoryId
+        - status
+      additionalProperties: false
       properties:
-        url:
-          type: string
-        isPrimary:
-          type: boolean
-        altText:
-          type: string
-
-    Attribute:
-      type: object
-      properties:
-        name:
-          type: string
-        value:
-          type: string
-        filterable:
-          type: boolean
-
-    Variant:
-      type: object
-      properties:
-        variantId:
-          type: string
-        sku:
-          type: string
-        price:
-          type: number
-        compareAtPrice:
-          type: number
-        inventory:
-          type: integer
-        attributes:
-          type: array
-          items:
-            $ref: '#/components/schemas/Attribute'
-
-    Ratings:
-      type: object
-      properties:
-        average:
-          type: number
-          format: float
-        count:
-          type: integer
-        distribution:
-          type: object
-          additionalProperties:
-            type: integer
-          description: "Map of star ratings, e.g. {'5': 100, '4': 42}"
-
-    ProductFlags:
-      type: object
-      properties:
-        isFeatured:
-          type: boolean
-        isBestseller:
-          type: boolean
-        isNew:
-          type: boolean
-
-    # ─── Search (Elasticsearch) ──────────────────────────────────────────────
-
-    SearchProductsRequest:
-      type: object
-      properties:
-        query:
-          type: string
-          default: "*"
-        status:
-          type: string
-        category:
-          type: string
-        categoryPath:
-          type: string
         title:
           type: string
+          minLength: 1
+          maxLength: 255
         brand:
           type: string
-        tags:
+          maxLength: 128
+        description:
+          type: string
+          maxLength: 5000
+        categoryId:
+          type: string
+        status:
+          $ref: '#/components/schemas/ProductStatus'
+        productKind:
+          $ref: '#/components/schemas/ProductKind'
+        options:
           type: array
+          maxItems: 3
           items:
-            type: string
-        inStockOnly:
-          type: boolean
-        isFeatured:
-          type: boolean
-        isNew:
-          type: boolean
+            $ref: '#/components/schemas/OptionDefinition'
+        images:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/Image'
         attributes:
-          type: object
-          additionalProperties:
-            type: array
-            items:
-              type: string
-        avgRating:
-          type: number
-          format: double
-        lat:
-          type: number
-          format: double
-        lon:
-          type: number
-          format: double
-        distance:
-          type: string
-        regions:
           type: array
+          maxItems: 50
           items:
-            type: string
-        storeIds:
+            $ref: '#/components/schemas/Attribute'
+        variants:
           type: array
+          maxItems: 100
           items:
-            type: string
-        page:
-          type: integer
-          default: 0
-        size:
-          type: integer
-          default: 20
-        sort:
-          type: string
+            $ref: '#/components/schemas/Variant'
+        bundleComponents:
+          type: array
+          maxItems: 50
+          description: Required iff productKind=BUNDLE.
+          items:
+            $ref: '#/components/schemas/BundleComponent'
+        seo:
+          $ref: '#/components/schemas/Seo'
+        flags:
+          $ref: '#/components/schemas/ProductFlags'
 
-    SearchResponse:
+    UpdateProductRequest:
       type: object
+      description: >
+        Full replacement (PUT). Omitted optional collections are cleared.
+        Variants are reconciled by variantId: matching variants updated,
+        variants without variantId created, omitted variants deleted. All
+        matrix and bundle rules are re-validated on the merged result.
+      required:
+        - title
+        - categoryId
+        - status
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        brand:
+          type: string
+          maxLength: 128
+        description:
+          type: string
+          maxLength: 5000
+        categoryId:
+          type: string
+        status:
+          $ref: '#/components/schemas/ProductStatus'
+        productKind:
+          $ref: '#/components/schemas/ProductKind'
+        options:
+          type: array
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/OptionDefinition'
+        images:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/Image'
+        attributes:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/Attribute'
+        variants:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/Variant'
+        bundleComponents:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/BundleComponent'
+        seo:
+          $ref: '#/components/schemas/Seo'
+        flags:
+          $ref: '#/components/schemas/ProductFlags'
+
+    ProductListResponse:
+      type: object
+      additionalProperties: false
+      required: [results, pagination]
       properties:
         results:
           type: array
           items:
             $ref: '#/components/schemas/Product'
-        facets:
-          type: array
-          items:
-            $ref: '#/components/schemas/Facet'
         pagination:
           $ref: '#/components/schemas/Pagination'
-        timeTaken:
-          type: integer
-          format: int64
 
     Pagination:
       type: object
+      additionalProperties: false
+      required: [page, size, totalElements, totalPages]
       properties:
         page:
           type: integer
+          minimum: 0
         size:
           type: integer
+          minimum: 1
+          maximum: 100
         totalElements:
           type: integer
           format: int64
         totalPages:
           type: integer
 
-    Facet:
+    Problem:
       type: object
+      description: RFC 9457 problem details, returned as application/problem+json.
       properties:
-        name:
+        type:
           type: string
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/FacetItem'
-
-    FacetItem:
-      type: object
-      properties:
-        key:
+          format: uri
+          example: 'https://api.example.com/problems/invalid-variant-matrix'
+        title:
           type: string
-        count:
+        status:
           type: integer
-          format: int64
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        errors:
+          type: array
+          description: Field-level validation details (extension).
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
